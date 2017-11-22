@@ -53,21 +53,21 @@ def build_generator(latent_size):
     cnn = Sequential()
 
     cnn.add(Dense(1024, input_dim=latent_size, activation='relu'))
-    cnn.add(Dense(128 * 7 * 7, activation='relu'))
-    cnn.add(Reshape((128, 7, 7)))
+    cnn.add(Dense(128 * 8 * 8, activation='relu'))
+    cnn.add(Reshape((128, 8, 8)))
 
     # upsample to (..., 14, 14)
-    cnn.add(UpSampling2D(size=(2, 2)))
+    cnn.add(UpSampling2D(size=(4, 4)))
     cnn.add(Convolution2D(256, 5, 5, border_mode='same',
                           activation='relu', init='glorot_normal'))
 
     # upsample to (..., 28, 28)
-    cnn.add(UpSampling2D(size=(2, 2)))
+    cnn.add(UpSampling2D(size=(4, 4)))
     cnn.add(Convolution2D(128, 5, 5, border_mode='same',
                           activation='relu', init='glorot_normal'))
 
     # take a channel axis reduction
-    cnn.add(Convolution2D(1, 2, 2, border_mode='same',
+    cnn.add(Convolution2D(2, 2, 2, border_mode='same',
                           activation='tanh', init='glorot_normal'))
 
     # this is the z space commonly refered to in GAN papers
@@ -76,8 +76,8 @@ def build_generator(latent_size):
     # this will be our label
     image_class = Input(shape=(1,), dtype='int32')
 
-    # 10 classes in MNIST
-    cls = Flatten()(Embedding(10, latent_size,
+    # 3 classes in DDSM
+    cls = Flatten()(Embedding(3, latent_size,
                               init='glorot_normal')(image_class))
 
     # hadamard product between z-space and a class conditional embedding
@@ -94,7 +94,7 @@ def build_discriminator():
     cnn = Sequential()
 
     cnn.add(Convolution2D(32, 3, 3, border_mode='same', subsample=(2, 2),
-                          input_shape=(1, 28, 28)))
+                          input_shape=(2, 128, 128)))
     cnn.add(LeakyReLU())
     cnn.add(Dropout(0.3))
 
@@ -112,7 +112,7 @@ def build_discriminator():
 
     cnn.add(Flatten())
 
-    image = Input(shape=(1, 28, 28))
+    image = Input(shape=(2, 128, 128))
 
     features = cnn(image)
 
@@ -121,18 +121,15 @@ def build_discriminator():
     # (name=auxiliary) is the class that the discriminator thinks the image
     # belongs to.
     fake = Dense(1, activation='sigmoid', name='generation')(features)
-    aux = Dense(10, activation='softmax', name='auxiliary')(features)
+    aux = Dense(3, activation='softmax', name='auxiliary')(features)
 
     return Model(input=image, output=[fake, aux])
 
 if __name__ == '__main__':
 
-    ddsm.load_data()
-    exit(0)
-
     # batch and latent size taken from the paper
-    nb_epochs = 50
-    batch_size = 100
+    nb_epochs = 10
+    batch_size = 7
     latent_size = 100
 
     # Adam parameters suggested in https://arxiv.org/abs/1511.06434
@@ -169,12 +166,12 @@ if __name__ == '__main__':
 
     # get our mnist data, and force it to be of shape (..., 1, 28, 28) with
     # range [-1, 1]
-    (X_train, y_train), (X_test, y_test) = mnist.load_data()
+    (X_train, y_train), (X_test, y_test) = ddsm.load_data()
     X_train = (X_train.astype(np.float32) - 127.5) / 127.5
-    X_train = np.expand_dims(X_train, axis=1)
+    # X_train = np.expand_dims(X_train, axis=1) # Não é necessário pro DDSM
 
     X_test = (X_test.astype(np.float32) - 127.5) / 127.5
-    X_test = np.expand_dims(X_test, axis=1)
+    # X_test = np.expand_dims(X_test, axis=1) # Não é necessário pro DDSM
 
     nb_train, nb_test = X_train.shape[0], X_test.shape[0]
 
@@ -192,6 +189,7 @@ if __name__ == '__main__':
 
         for index in range(nb_batches):
             progress_bar.update(index)
+
             # generate a new batch of noise
             noise = np.random.uniform(-1, 1, (batch_size, latent_size))
 
@@ -200,7 +198,7 @@ if __name__ == '__main__':
             label_batch = y_train[index * batch_size:(index + 1) * batch_size]
 
             # sample some labels from p_c
-            sampled_labels = np.random.randint(0, 10, batch_size)
+            sampled_labels = np.random.randint(0, 3, batch_size)
 
             # generate a batch of fake images, using the generated labels as a
             # conditioner. We reshape the sampled labels to be
@@ -220,7 +218,7 @@ if __name__ == '__main__':
             # the generator optimize over an identical number of images as the
             # discriminator
             noise = np.random.uniform(-1, 1, (2 * batch_size, latent_size))
-            sampled_labels = np.random.randint(0, 10, 2 * batch_size)
+            sampled_labels = np.random.randint(0, 3, 2 * batch_size)
 
             # we want to train the genrator to trick the discriminator
             # For the generator, we want all the {fake, not-fake} labels to say
@@ -238,7 +236,7 @@ if __name__ == '__main__':
         noise = np.random.uniform(-1, 1, (nb_test, latent_size))
 
         # sample some labels from p_c and generate images from them
-        sampled_labels = np.random.randint(0, 10, nb_test)
+        sampled_labels = np.random.randint(0, 3, nb_test)
         generated_images = generator.predict(
             [noise, sampled_labels.reshape((-1, 1))], verbose=False)
 
@@ -254,7 +252,7 @@ if __name__ == '__main__':
 
         # make new noise
         noise = np.random.uniform(-1, 1, (2 * nb_test, latent_size))
-        sampled_labels = np.random.randint(0, 10, 2 * nb_test)
+        sampled_labels = np.random.randint(0, 3, 2 * nb_test)
 
         trick = np.ones(2 * nb_test)
 
@@ -292,10 +290,10 @@ if __name__ == '__main__':
             'params_discriminator_epoch_{0:03d}.hdf5'.format(epoch), True)
 
         # generate some digits to display
-        noise = np.random.uniform(-1, 1, (100, latent_size))
+        noise = np.random.uniform(-1, 1, (30, latent_size))
 
         sampled_labels = np.array([
-            [i] * 10 for i in range(10)
+            [i] * 10 for i in range(3)
         ]).reshape(-1, 1)
 
         # get a batch to display
@@ -303,7 +301,7 @@ if __name__ == '__main__':
             [noise, sampled_labels], verbose=0)
 
         # arrange them into a grid
-        img = (np.concatenate([r.reshape(-1, 28)
+        img = (np.concatenate([r.reshape(-1, 128)
                                for r in np.split(generated_images, 10)
                                ], axis=-1) * 127.5 + 127.5).astype(np.uint8)
 
